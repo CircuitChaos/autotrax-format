@@ -1,18 +1,23 @@
-# AutoTrax PCB File Format
+# AutoTrax PCB and LIB File Format
 
-This file describes the PCB file format used by Protel AutoTrax 1.61 ND („PCB FILE 4”). It's been reverse-engineered by me (Circuit Chaos).
+This file describes the PCB and LIB file formats, used by Protel AutoTrax 1.61 ND. Both have been reverse-engineered by me (Circuit Chaos). They're described together, as they use roughly the same data types, just in different formats.
 
-## Overall format
+## Primitives
 
-* PCB file is a text file, with CRLF line endings
-* First line is always `PCB FILE 4`
-* Last line is always `ENDPCB`
+I introduce a concept of "primitives". This is what I call the basic shapes that AutoTrax uses. They're the building blocks of both PCB and LIB files. List of primitives:
 
-## Attribute types
+* Arc
+* Fill
+* Pad
+* String
+* Track
+* Via
 
-Some attributes, like layer, rotation, circle quadrants, etc. are specified as numbers. Here are the numbers.
+## Attributes
 
-All sizes and coordinates are in mils. If metric system is used, then it's just translated by the program – PCB file is still in mils.
+Some primitives can have various numeric attributes. These are things like layers, rotations, arc quadrants, etc. They're specified as numbers, present in a decimal form in a PCB file, and in a binary form in a LIB file.
+
+This is the list of attributes.
 
 ### Rotation
 
@@ -29,7 +34,7 @@ Rotation is counter-clockwise.
 
 ### Quadrants
 
-Used in arcs. It's a sum of the following values.
+Used in arcs. It's a sum (bit mask) of the following values.
 
 * 1: Third quadrant (upper right)
 * 2: Second quadrant (upper left)
@@ -37,6 +42,8 @@ Used in arcs. It's a sum of the following values.
 * 8: Fourth quadrant (lower right)
 
 0 means no quadrants shown (all are hidden).
+
+Note that math says that "Quadrant I" is the top-right one, etc., but AutoTrax uses its own naming.
 
 ### Layer
 
@@ -76,6 +83,8 @@ Used in pads.
 * 3: Direct to Ground Plane
 * 4: Relief to Power Plane
 * 5: Direct to Power Plane
+* 6: Tagged to Ground Plane
+* 7: Tagged to Power Plane
 
 ### User-routed
 
@@ -84,17 +93,93 @@ Used in tracks.
 * 0: Not user-routed
 * 1: User-routed
 
-## Primitives
+A track in a LIB file doesn't have this field.
 
-AutoTrax supports different primitives – tracks, vias, etc. They're described here. Each primitive spans either two or three lines.
+## PCB file overall format
 
-First line is the primitive type. Always two letters, where first is `F` (or `C` in case of primitives being parts of components, see below).
+* This is a text file, with CRLF line endings
+* First line is always `PCB FILE 4`
+* Last line is always `ENDPCB`
+* Primitives and components can occur between first and last line
+* Coordinates are in mils, even if the metric system is used by the program (they're just translated)
 
-Second line contains numeric parameters, separated by space.
+## LIB file overall format
+
+* This is a binary file
+* It is split into three parts (sections):
+  * Header
+  * Index
+  * Data
+* Multi-byte values are stored MSB-first (for example, bytes: 0x32 0x00 mean decimal value 50)
+* Coordinates are stored as signed 16-bit integers, so they can be negative
+
+### LIB file header
+
+Header is 16 bytes, always 0x00 0x00 0x0d and string: `PCB 4 LIBRARY`.
+
+### LIB file index
+
+Index is a table of 200 structures, each occupying 32 bytes. Each structure represents one element. 
+It means the library can't be larger than 200 elements.
+
+Index structure format:
+
+| Offset | Size | Meaning |
+| ------ | ---- | ------- |
+| 0x00   | 0x02 | Unknown, always 0x00 |
+| 0x02   | 0x01 | Component name length in bytes, from 0x01 to 0x0c |
+| 0x03   | 0x0c | Component name, right-padded with 0x00 |
+| 0x0f   | 0x01 | Unknown, always 0x00 |
+| 0x10   | 0x02 | Unknown, always 0x00 |
+| 0x12   | 0x02 | Number of primitives in a component |
+| 0x14   | 0x02 | Offset in file of the first primitive, divided by 16; for example, 0x91 0x01 translates to offset 0x1910 |
+| 0x16   | 0x0a | Unknown, always 0x00 |
+
+In an empty table entry:
+
+* Number of primitives is 0xff 0xff
+* Offset in file is 0xff 0xff
+
+In a deleted table entry:
+
+* Offset in file is 0xff 0xff
+* Everything else is as normal
+
+If an entry is deleted, and a new entry is added, this new entry will take place of the deleted entry.
+
+Compacting the library does not erase anything from the index table.
+
+### LIB file data
+
+Data immediately follows the index. It contains one or more primitives. Each primitive is either 
+16 or 32 byte long.
+
+In case of a deleted entry, data stays in this section and new data is appended to the end of the file. 
+Compacting the library fixes this and deletes old data (data belonging to deleted components).
+
+Primitives correspond to primitives used in a PCB file, they're just stored in a binary form.
+
+Coordinates are stored as signed little-endian 16-bit integers, in mils, relative to the reference point. 
+Simple example of how to calculate: 0xfb 0xff -> 0xfffb -> 65531; 65536 - 65531 = -5. This is -5.
+
+## Formats of primitives
+
+AutoTrax supports different primitives – tracks, vias, etc. They're described below, and each spans either:
+
+* Two lines in a PCB file and 16 bytes in a LIB file
+* Three lines in a PCB file and 32 bytes in a LIB file
+
+In a PCB file, first line is the primitive type. Always two letters, where first is `F` (or `C` in case of primitives being parts of components, see below).
+
+Second line contains numeric parameters, separated by spaces.
 
 Third line exists only for pads and strings, and contains text (pad name or string text).
 
 ### Arc
+
+Size: 2 lines (PCB), 16 bytes (LIB)
+
+Format in a PCB file:
 
 * Type: `FA`
 * Parameters:
@@ -105,7 +190,20 @@ Third line exists only for pads and strings, and contains text (pad name or stri
   * Line width
   * Layer
 
-Example:
+Format in a LIB file:
+
+| Offset | Size | Meaning |
+| ------ | ---- | ------- |
+| 0x00   | 0x01 | Layer |
+| 0x01   | 0x01 | Primitive type, always 0x01 |
+| 0x02   | 0x02 | X position |
+| 0x04   | 0x02 | Y position |
+| 0x06   | 0x02 | Radius  |
+| 0x08   | 0x01 | Quadrants |
+| 0x09   | 0x01 | Line width |
+| 0x0a   | 0x06 | Zeroes |
+
+Example in a PCB file:
 
 ```
 FA
@@ -117,11 +215,15 @@ This is:
 * Arc (FA)
 * Placed at X=325 and Y=1075 mils
 * Radius is 25 mils
-* Quadrants are all except first (lower left): 8 + 2 + 1 = 11
+* Quadrants are all visible except the first (lower left, value 4) one: 8 + 2 + 1 = 11
 * Width is 10 mils
 * Placed on Bottom Layer (6)
 
 ### Fill
+
+Size: 2 lines (PCB), 16 bytes (LIB)
+
+Format in a PCB file:
 
 * Type: `FF`
 * Parameters:
@@ -131,7 +233,19 @@ This is:
   * Ending Y coordinate
   * Layer
 
-Example:
+Format in a LIB file:
+
+| Offset | Size | Meaning |
+| ------ | ---- | ------- |
+| 0x00   | 0x01 | Layer |
+| 0x01   | 0x01 | Primitive type, always 0x02 |
+| 0x02   | 0x02 | Starting X |
+| 0x04   | 0x02 | Starting Y |
+| 0x06   | 0x02 | Ending X |
+| 0x08   | 0x02 | Ending Y |
+| 0x0a   | 0x06 | Zeroes |
+
+Example in a PCB file:
 
 ```
 FF
@@ -147,6 +261,10 @@ This is:
 
 ### Pad
 
+Size: 3 lines (PCB), 32 bytes (LIB)
+
+Format in a PCB file:
+
 * Type: `FP`
 * Parameters:
   * X coordinate
@@ -159,7 +277,27 @@ This is:
   * Layer
 * Name
 
-Example:
+Format in a LIB file:
+
+| Offset | Size | Meaning |
+| ------ | ---- | ------- |
+| 0x00   | 0x01 | Layer (only 0x01, 0x06, 0x0d) |
+| 0x01   | 0x01 | Primitive type, always 0x03 |
+| 0x02   | 0x02 | X position |
+| 0x04   | 0x02 | Y position |
+| 0x06   | 0x02 | X size |
+| 0x08   | 0x02 | Y size |
+| 0x0a   | 0x02 | Hole size |
+| 0x0c   | 0x01 | Shape |
+| 0x0d   | 0x01 | Plane connection |
+| 0x0e   | 0x02 | Zeroes |
+| 0x10   | 0x01 | Zero |
+| 0x11   | 0x01 | Primitive continuation type, always 0x04 |
+| 0x12   | 0x01 | Designator size, 0...4 |
+| 0x13   | 0x04 | Designator, zero-padded to the right |
+| 0x17   | 0x09 | Zeroes |
+
+Example in a PCB file:
 
 ```
 FP
@@ -180,6 +318,10 @@ This is:
 
 ### String
 
+Size: 3 lines (PCB), 32 bytes (LIB)
+
+Format in a PCB file:
+
 * Type: `FS`
 * Parameters:
   * X coordinate
@@ -190,7 +332,27 @@ This is:
   * Layer
 * Text
 
-Example:
+Format in a LIB file:
+
+| Offset | Size | Meaning |
+| ------ | ---- | ------- |
+| 0x00   | 0x01 | Layer |
+| 0x01   | 0x01 | Primitive type, always 0x06 |
+| 0x02   | 0x02 | X position |
+| 0x04   | 0x02 | Y position |
+| 0x06   | 0x02 | Height |
+| 0x08   | 0x01 | Line width |
+| 0x09   | 0x01 | Rotation |
+| 0x0a   | 0x06 | Zeroes |
+| 0x10   | 0x01 | Zero |
+| 0x11   | 0x01 | Primitive continuation type, always 0x07 |
+| 0x12   | 0x01 | String length, max 0x0c |
+| 0x13   | 0x0c | String, right-padded with zeroes, max 0x0c bytes |
+| 0x1f   | 0x01 | Zero |
+
+Interesting finding – a string in a PCB file can be longer than 0x0c, but when saving to a library, it's truncated.
+
+Example in a PCB file:
 
 ```
 FS
@@ -209,6 +371,10 @@ This is:
 
 ### Track
 
+Size: 2 lines (PCB), 16 bytes (LIB)
+
+Format in a PCB file:
+
 * Type: `FT`
 * Parameters:
   * Starting X coordinate
@@ -219,7 +385,20 @@ This is:
   * Layer
   * User-routed
 
-Example:
+Format in a LIB file:
+
+| Offset | Size | Meaning |
+| ------ | ---- | ------- |
+| 0x00   | 0x01 | Layer |
+| 0x01   | 0x01 | Primitive type, always 0x05 |
+| 0x02   | 0x02 | Starting X |
+| 0x04   | 0x02 | Starting Y |
+| 0x06   | 0x02 | Ending X |
+| 0x08   | 0x02 | Ending Y |
+| 0x0a   | 0x01 | Width |
+| 0x0b   | 0x05 | Zeroes |
+
+Example in a PCB file:
 
 ```
 FT
@@ -237,6 +416,10 @@ This is:
 
 ### Via
 
+Size: 2 lines (PCB), 16 bytes (LIB)
+
+Format in a PCB file:
+
 * Type: `FV`
 * Parameters:
   * X coordinate
@@ -244,7 +427,20 @@ This is:
   * Diameter
   * Hole size
 
-Example:
+Format in a LIB file:
+
+| Offset | Size | Meaning |
+| ------ | ---- | ------- |
+| 0x00   | 0x01 | Zero |
+| 0x01   | 0x01 | Primitive type, always 0x08 |
+| 0x02   | 0x02 | X position |
+| 0x04   | 0x02 | Y position |
+| 0x06   | 0x01 | Size |
+| 0x07   | 0x01 | Hole size |
+| 0x08   | 0x01 | Unknown, always 0x01 |
+| 0x09   | 0x07 | Zeroes |
+
+Example in a PCB file:
 
 ```
 FV
@@ -260,7 +456,7 @@ This is:
 
 ## Components
 
-Component is a set of primitives. Component structure:
+Component (it can exist only in a PCB file) is a set of primitives. Component structure:
 
 * First line: `COMP`
 * Designator (text)
@@ -279,8 +475,8 @@ Component is a set of primitives. Component structure:
 
 Designator or comment status values:
 
-* 1: shown
-* 2: hidden
+* 1: Shown
+* 2: Hidden
 
 Placement status values:
 
@@ -325,7 +521,7 @@ This is:
 
 ## TODO
 
-* Reverse-engineer the library (.LIB) format
+* Reverse-engineer all values marked `unknown` in a LIB file – can they have different values? When and why?
 
 ## Contact
 
