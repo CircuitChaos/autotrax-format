@@ -2,6 +2,8 @@
 
 This file describes the PCB and LIB file formats, used by Protel AutoTrax 1.61 ND. Both have been reverse-engineered by me (Circuit Chaos). They're described together, as they use roughly the same data types, just in different formats.
 
+If you're interested in the format of these files, you might also want to check out tools I wrote to make my life with AutoTrax easier: <https://github.com/CircuitChaos/autotrax-tools>.
+
 ## Primitives
 
 I introduce a concept of "primitives". This is what I call the basic shapes that AutoTrax uses. They're the building blocks of both PCB and LIB files. List of primitives:
